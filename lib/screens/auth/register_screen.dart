@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -23,6 +26,56 @@ emailController.dispose();
 passwordController.dispose();
 confirmPasswordController.dispose();
 super.dispose();
+}
+
+Future<void> register() async {
+  final fullName = fullNameController.text.trim();
+  final email = emailController.text.trim();
+  final password = passwordController.text;
+  final confirmPassword = confirmPasswordController.text;
+
+  if (fullName.isEmpty || email.isEmpty ||
+      password.isEmpty || confirmPassword.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Vui lòng nhập đầy đủ thông tin')),
+    );
+    return;
+  }
+
+  if (password != confirmPassword) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Mật khẩu xác nhận không khớp')),
+    );
+    return;
+  }
+
+  try {
+    final response = await http.post(
+      Uri.parse('http://10.0.2.2:3000/api/auth/register'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'fullName': fullName,
+        'email': email,
+        'password': password,
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(data['message'] ?? 'Đăng ký thất bại'),
+      ),
+    );
+  } catch (e) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Không thể kết nối đến máy chủ')),
+    );
+  }
 }
 
 @override
@@ -138,16 +191,7 @@ fillColor: Colors.white,
   SizedBox(
     height: 52,
     child: ElevatedButton(
-      onPressed: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Giao diện đăng ký đã hoạt động. '
-                  'Chức năng sẽ được kết nối với API sau.',
-            ),
-          ),
-        );
-      },
+      onPressed: register,
       style: ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF4F46E5),
         foregroundColor: Colors.white,
