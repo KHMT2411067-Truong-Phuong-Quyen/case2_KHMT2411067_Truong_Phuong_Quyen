@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'register_screen.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import '../profile/profile_screen.dart';
+import '../tasks/task_list_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -61,14 +61,16 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (response.statusCode == 200) {
         final user = data['user'];
+        final token = data['token'];
 
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => ProfileScreen(
-              userId: user['id'],
+            builder: (context) => TaskListScreen(
+              userId: user['id'].toString(),
               fullName: user['fullName'] ?? '',
               email: user['email'] ?? email,
+              token: token,
             ),
           ),
         );

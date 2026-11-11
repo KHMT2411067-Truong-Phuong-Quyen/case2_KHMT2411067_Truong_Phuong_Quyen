@@ -179,4 +179,25 @@ const changePassword = async (req, res) => {
   }
 };
 
-module.exports = { register, login, updateProfile, changePassword };
+
+// Lấy danh sách người dùng
+const getUsers = async (req, res) => {
+  try {
+    const users = await User.find()
+      .select('_id fullName email')
+      .sort({ fullName: 1 });
+
+    return res.status(200).json({
+      message: 'Lấy danh sách người dùng thành công',
+      users,
+    });
+  } catch (error) {
+    console.error('Get users error:', error.message);
+    return res.status(500).json({
+      message: 'Lỗi máy chủ khi lấy danh sách người dùng',
+    });
+  }
+};
+
+
+module.exports = { register, login, updateProfile, changePassword, getUsers,};
