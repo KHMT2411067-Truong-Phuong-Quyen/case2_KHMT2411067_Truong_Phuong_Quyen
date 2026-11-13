@@ -61,14 +61,46 @@ class _TaskListScreenState extends State<TaskListScreen> {
         return assigneeId == widget.userId;
       });
 
+      final primary = task['primaryAssigneeId'];
+      final primaryId = primary is Map
+          ? primary['_id']?.toString()
+          : primary?.toString();
+
+      final isPrimaryAssignee = primaryId == widget.userId;
+
+      final sharedUsers = task['sharedWith'] as List? ?? [];
+
+      final isSharedUser = sharedUsers.any((item) {
+        final user = item['userId'];
+        final userId = user is Map
+            ? user['_id']?.toString()
+            : user?.toString();
+
+        return userId == widget.userId;
+      });
+
+
       switch (selectedTaskType) {
+        case 'created':
+          return isCreator;
+
+        case 'primary':
+          return isPrimaryAssignee;
+
+        case 'shared':
+          return isSharedUser;
+
         case 'received':
           return isAssignee && !isCreator;
+
         case 'assigned':
           return isCreator && assignees.isNotEmpty;
+
         default:
           return true;
       }
+
+
     }).toList();
 
 
@@ -270,20 +302,36 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.folder_outlined),
               ),
+
+
               items: const [
                 DropdownMenuItem(
                   value: 'all',
                   child: Text('Tất cả công việc'),
                 ),
                 DropdownMenuItem(
+                  value: 'created',
+                  child: Text('Công việc do tôi tạo'),
+                ),
+                DropdownMenuItem(
+                  value: 'primary',
+                  child: Text('Công việc tôi phụ trách chính'),
+                ),
+                DropdownMenuItem(
+                  value: 'shared',
+                  child: Text('Công việc được chia sẻ với tôi'),
+                ),
+                DropdownMenuItem(
                   value: 'received',
-                  child: Text('Công việc được giao cho tôi'),
+                  child: Text('Tất cả công việc được giao cho tôi'),
                 ),
                 DropdownMenuItem(
                   value: 'assigned',
                   child: Text('Công việc tôi đã giao'),
                 ),
               ],
+
+
               onChanged: (value) {
                 if (value != null) {
                   setState(() {

@@ -32,6 +32,23 @@ const taskSchema = new mongoose.Schema(
       default: null,
     },
 
+
+    sharedWith: [
+      {
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          required: true,
+        },
+        role: {
+          type: String,
+          enum: ['viewer', 'editor'],
+          default: 'viewer',
+        },
+      },
+    ],
+
+
     startDate: {
       type: Date,
       default: null,

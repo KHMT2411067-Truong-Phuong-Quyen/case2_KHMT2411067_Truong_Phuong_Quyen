@@ -29,7 +29,12 @@ class _TaskCreateScreenState extends State<TaskCreateScreen> {
 
   List<Map<String, dynamic>> users = [];
   List<String> selectedAssigneeIds = [];
+
+  Map<String, String> selectedSharedUsers = {};
+
   bool isLoadingUsers = false;
+
+  String? primaryAssigneeId;
 
 
   Future<void> loadUsers() async {
@@ -125,6 +130,13 @@ class _TaskCreateScreenState extends State<TaskCreateScreen> {
           'startDate': startDate?.toIso8601String(),
           'dueDate': dueDate?.toIso8601String(),
           'assigneeIds': selectedAssigneeIds,
+          'primaryAssigneeId': primaryAssigneeId,
+          'sharedWith': selectedSharedUsers.entries.map((entry) {
+            return {
+              'userId': entry.key,
+              'role': entry.value,
+            };
+          }).toList(),
         }),
       );
 
@@ -312,6 +324,120 @@ class _TaskCreateScreenState extends State<TaskCreateScreen> {
                   },
                 );
               }),
+
+            const Text(
+              'Người phụ trách chính',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            DropdownButtonFormField<String>(
+              value: primaryAssigneeId,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Chọn người phụ trách chính',
+              ),
+              items: users
+                  .where((user) => selectedAssigneeIds.contains(user['_id'].toString()))
+                  .map((user) {
+                return DropdownMenuItem<String>(
+                  value: user['_id'].toString(),
+                  child: Text(user['fullName'] ?? ''),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() {
+                  primaryAssigneeId = value;
+                });
+              },
+            ),
+
+
+            const Divider(height: 32),
+
+            const Text(
+              'Chia sẻ công việc',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            const Text(
+              'Chọn người được chia sẻ và quyền truy cập',
+            ),
+
+            ...users
+                .where((user) =>
+            !selectedAssigneeIds.contains(
+              user['_id'].toString(),
+            ))
+                .map((user) {
+              final userId = user['_id'].toString();
+              final isSelected =
+              selectedSharedUsers.containsKey(userId);
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(user['fullName'] ?? ''),
+                    subtitle: Text(user['email'] ?? ''),
+                    value: isSelected,
+                    onChanged: (checked) {
+                      setState(() {
+                        if (checked == true) {
+                          selectedSharedUsers[userId] = 'viewer';
+                        } else {
+                          selectedSharedUsers.remove(userId);
+                        }
+                      });
+                    },
+                  ),
+
+                  if (isSelected)
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        left: 16,
+                        right: 16,
+                        bottom: 12,
+                      ),
+                      child: DropdownButtonFormField<String>(
+                        value: selectedSharedUsers[userId],
+                        decoration: const InputDecoration(
+                          labelText: 'Quyền truy cập',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'viewer',
+                            child: Text('Viewer - Chỉ xem'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'editor',
+                            child: Text('Editor - Được chỉnh sửa'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() {
+                              selectedSharedUsers[userId] = value;
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                ],
+              );
+            }),
+
 
             const SizedBox(height: 20),
 
