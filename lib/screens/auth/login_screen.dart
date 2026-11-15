@@ -3,6 +3,7 @@ import 'register_screen.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../tasks/task_list_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -59,9 +60,18 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
 
+
+
+
       if (response.statusCode == 200) {
         final user = data['user'];
         final token = data['token'];
+
+        // Lưu token để sử dụng cho các chức năng khác
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('token', token);
+
+
 
         Navigator.pushReplacement(
           context,

@@ -4,6 +4,8 @@ import 'task_create_screen.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'task_detail_screen.dart';
+import '../ notifications/notification_screen.dart';
+import '../../services/notification_service.dart';
 
 
 
@@ -29,6 +31,7 @@ class TaskListScreen extends StatefulWidget {
 class _TaskListScreenState extends State<TaskListScreen> {
   final List<Map<String, dynamic>> tasks = [];
   final TextEditingController searchController = TextEditingController();
+  int unreadCount = 0;
 
   String searchText = '';
   String? selectedStatus;
@@ -79,23 +82,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
         return userId == widget.userId;
       });
 
-
       switch (selectedTaskType) {
         case 'created':
           return isCreator;
-
         case 'primary':
           return isPrimaryAssignee;
-
         case 'shared':
           return isSharedUser;
-
-        case 'received':
-          return isAssignee && !isCreator;
-
-        case 'assigned':
-          return isCreator && assignees.isNotEmpty;
-
         default:
           return true;
       }
@@ -241,6 +234,23 @@ class _TaskListScreenState extends State<TaskListScreen> {
     }
   }
 
+
+  Future<void> loadUnreadCount() async {
+    try {
+      final count = await NotificationService.getUnreadCount();
+
+      if (!mounted) return;
+
+      setState(() {
+        unreadCount = count;
+      });
+    } catch (e) {
+      debugPrint('Lỗi tải số thông báo: $e');
+    }
+  }
+
+
+
   Future<void> openCreateTask() async {
     final newTask = await Navigator.push(
       context,
@@ -262,6 +272,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     super.initState();
     loadTasks();
     loadUsers();
+    loadUnreadCount();
   }
 
   @override
@@ -269,7 +280,59 @@ class _TaskListScreenState extends State<TaskListScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Danh sách công việc'),
+
+
+
+
         actions: [
+          IconButton(
+            tooltip: 'Thông báo',
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => NotificationScreen(
+                      token: widget.token,
+                  ),
+                ),
+              );
+
+              loadUnreadCount();
+            },
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.notifications_outlined, size: 28),
+
+                if (unreadCount > 0)
+                  Positioned(
+                    right: -5,
+                    top: -5,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 18,
+                        minHeight: 18,
+                      ),
+                      child: Text(
+                        unreadCount > 99 ? '99+' : '$unreadCount',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
           IconButton(
             icon: const Icon(Icons.account_circle),
             tooltip: 'Hồ sơ cá nhân',
@@ -302,7 +365,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.folder_outlined),
               ),
-
 
               items: const [
                 DropdownMenuItem(

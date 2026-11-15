@@ -233,7 +233,9 @@ void changePassword() {
         backgroundColor: const Color(0xFF4F46E5),
         foregroundColor: Colors.white,
       ),
-      body: Padding(
+
+
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -285,7 +287,7 @@ void changePassword() {
             ),
             const SizedBox(height: 12),
 
-            const Spacer(),
+
             ElevatedButton.icon(
               onPressed: () {
                 Navigator.pushAndRemoveUntil(

@@ -1,6 +1,8 @@
 const Task = require('../models/Task');
 const User = require('../models/User');
-
+const { createBulkNotifications } = require('../services/notificationService');
+const { sendEmail } = require('../services/emailService');
+const { getTaskRecipients } = require('../services/taskService');
 
 // Lấy danh sách công việc
 const getTasks = async (req, res) => {
@@ -152,6 +154,69 @@ const createTask = async (req, res) => {
       dueDate: dueDate || null,
     });
 
+
+    // Gửi thông báo và email cho người được giao
+    try {
+      const assignedUsers = await User.find({
+        _id: { $in: assigneeIds },
+      });
+
+      if (assignedUsers.length > 0) {
+        await createBulkNotifications({
+          userIds: assignedUsers.map(user => user._id),
+          taskId: task._id,
+          type: 'task_assigned',
+          title: 'Bạn được giao công việc mới',
+          message: `Bạn được giao công việc: ${task.title}`,
+        });
+
+        await Promise.all(
+          assignedUsers
+            .filter(user => user.email)
+            .map(user =>
+              sendEmail({
+                taskId: task._id,
+                recipientEmail: user.email,
+                subject: 'Bạn được giao công việc mới',
+                text: `Xin chào ${user.fullName}, bạn vừa được giao công việc: ${task.title}.`,
+              })
+            )
+        );
+      }
+
+      // Gửi thông báo và email cho người được chia sẻ
+      const sharedUsers = await User.find({
+        _id: { $in: sharedWith.map(item => item.userId) },
+      });
+
+      if (sharedUsers.length > 0) {
+        await createBulkNotifications({
+          userIds: sharedUsers.map(user => user._id),
+          taskId: task._id,
+          type: 'task_shared',
+          title: 'Bạn được chia sẻ công việc',
+          message: `Bạn được mời xem hoặc tham gia công việc: ${task.title}`,
+        });
+
+        await Promise.all(
+          sharedUsers
+            .filter(user => user.email)
+            .map(user =>
+              sendEmail({
+                taskId: task._id,
+                recipientEmail: user.email,
+                subject: 'Bạn được chia sẻ công việc',
+                text: `Xin chào ${user.fullName}, bạn vừa được chia sẻ công việc: ${task.title}.`,
+              })
+            )
+        );
+      }
+    } catch (notificationError) {
+      console.error('Task notification error:', notificationError.message);
+    }
+
+
+
     return res.status(201).json({
       message: 'Tạo công việc thành công',
       task,
@@ -189,33 +254,21 @@ const updateTask = async (req, res) => {
       'Đã hoàn thành': 'completed',
     };
 
-    const task = await Task.findOneAndUpdate(
-      {
-        _id: req.params.id,
-        $or: [
-          { createdBy: req.user.userId },
-          {
-            sharedWith: {
-              $elemMatch: {
-                userId: req.user.userId,
-                role: 'editor',
-              },
+    // Tìm công việc và kiểm tra quyền chỉnh sửa
+    const task = await Task.findOne({
+      _id: req.params.id,
+      $or: [
+        { createdBy: req.user.userId },
+        {
+          sharedWith: {
+            $elemMatch: {
+              userId: req.user.userId,
+              role: 'editor',
             },
           },
-        ],
-      },
-
-
-      {
-        title: title?.trim(),
-        description: description ?? '',
-        priority: priorityMap[priority] || priority,
-        status: statusMap[status] || status,
-        startDate: startDate || null,
-        dueDate: dueDate || null,
-      },
-      { new: true, runValidators: true }
-    );
+        },
+      ],
+    });
 
     if (!task) {
       return res.status(404).json({
@@ -223,18 +276,122 @@ const updateTask = async (req, res) => {
       });
     }
 
-          return res.status(200).json({
-            message: 'Cập nhật công việc thành công',
-            task,
-          });
-        } catch (error) {
-          console.error('Update task error:', error.message);
+    // Lưu trạng thái cũ để so sánh
+    const oldStatus = task.status;
 
-          return res.status(500).json({
-            message: 'Lỗi máy chủ khi cập nhật công việc',
-          });
-        }
-      };
+    const oldValues = {
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      startDate: task.startDate?.toISOString() || null,
+      dueDate: task.dueDate?.toISOString() || null,
+    };
+
+    // Cập nhật các trường được gửi lên
+    if (title !== undefined) task.title = title.trim();
+    if (description !== undefined) task.description = description;
+    if (priority !== undefined) {
+      task.priority = priorityMap[priority] || priority;
+    }
+    if (status !== undefined) {
+      task.status = statusMap[status] || status;
+    }
+    if (startDate !== undefined) task.startDate = startDate || null;
+    if (dueDate !== undefined) task.dueDate = dueDate || null;
+
+    await task.save();
+
+    // Kiểm tra thông tin quan trọng có thay đổi không
+    const changedFields = [];
+
+    if (oldValues.title !== task.title) changedFields.push('tên công việc');
+    if (oldValues.description !== task.description) changedFields.push('mô tả');
+    if (oldValues.priority !== task.priority) changedFields.push('độ ưu tiên');
+
+    if (oldValues.startDate !== (task.startDate?.toISOString() || null)) {
+      changedFields.push('ngày bắt đầu');
+    }
+
+    if (oldValues.dueDate !== (task.dueDate?.toISOString() || null)) {
+      changedFields.push('hạn hoàn thành');
+    }
+
+    // Kiểm tra công việc vừa chuyển sang hoàn thành
+    const justCompleted =
+      oldStatus !== 'completed' && task.status === 'completed';
+
+    try {
+      const recipients = await getTaskRecipients(task._id);
+      const userIds = recipients.map(user => user._id);
+
+      // Thông báo khi thông tin công việc thay đổi
+      if (changedFields.length > 0) {
+        const message = `Công việc "${task.title}" đã được cập nhật: ${changedFields.join(', ')}.`;
+
+        await createBulkNotifications({
+          userIds,
+          taskId: task._id,
+          type: 'task_updated',
+                    title: 'Công việc đã được cập nhật',
+                    message,
+                  });
+
+                  await Promise.all(
+                    recipients
+                      .filter(user => user.email)
+                      .map(user =>
+                        sendEmail({
+                          taskId: task._id,
+                          recipientEmail: user.email,
+                          subject: 'Công việc đã được cập nhật',
+                          text: message,
+                        })
+                      )
+                  );
+                }
+
+                // Thông báo khi công việc hoàn thành
+                if (justCompleted) {
+                  const message = `Công việc "${task.title}" đã được đánh dấu hoàn thành.`;
+
+                  await createBulkNotifications({
+                    userIds,
+                    taskId: task._id,
+                    type: 'task_completed',
+                    title: 'Công việc đã hoàn thành',
+                    message,
+                  });
+
+                  await Promise.all(
+                    recipients
+                      .filter(user => user.email)
+                      .map(user =>
+                        sendEmail({
+                          taskId: task._id,
+                          recipientEmail: user.email,
+                          subject: 'Công việc đã hoàn thành',
+                          text: message,
+                        })
+                      )
+                  );
+                }
+              } catch (notificationError) {
+                console.error('Task update notification error:', notificationError.message);
+              }
+
+              return res.status(200).json({
+                message: 'Cập nhật công việc thành công',
+                task,
+              });
+            } catch (error) {
+              console.error('Update task error:', error.message);
+
+              return res.status(500).json({
+                message: 'Lỗi máy chủ khi cập nhật công việc',
+              });
+            }
+          };
+
 
       // Xóa công việc
       const deleteTask = async (req, res) => {
@@ -295,8 +452,39 @@ const updateTask = async (req, res) => {
             });
           }
 
+
+
+          const oldRole = sharedUser.role;
+
           sharedUser.role = role;
           await task.save();
+
+          if (oldRole !== role) {
+            try {
+              await createBulkNotifications({
+                userIds: [userId],
+                taskId: task._id,
+                type: 'share_permission_updated',
+                title: 'Quyền chia sẻ đã thay đổi',
+                message: `Quyền của bạn đối với công việc "${task.title}" đã được đổi thành ${role === 'editor' ? 'Người chỉnh sửa' : 'Người xem'}.`,
+              });
+
+              const sharedUserAccount = await User.findById(userId);
+
+              if (sharedUserAccount?.email) {
+                await sendEmail({
+                  taskId: task._id,
+                  recipientEmail: sharedUserAccount.email,
+                  subject: 'Quyền chia sẻ công việc đã thay đổi',
+                  text: `Quyền của bạn đối với công việc "${task.title}" đã được đổi thành ${role === 'editor' ? 'Người chỉnh sửa' : 'Người xem'}.`,
+                });
+              }
+            } catch (notificationError) {
+              console.error('Share permission notification error:', notificationError.message);
+            }
+          }
+
+
 
           return res.status(200).json({
             message: 'Cập nhật quyền chia sẻ thành công',
@@ -346,6 +534,31 @@ const updateTask = async (req, res) => {
           }
 
           await task.save();
+
+
+          try {
+            await createBulkNotifications({
+              userIds: [userId],
+              taskId: task._id,
+              type: 'share_access_revoked',
+              title: 'Quyền truy cập đã bị thu hồi',
+              message: `Bạn không còn quyền truy cập công việc "${task.title}".`,
+            });
+
+            const revokedUser = await User.findById(userId);
+
+            if (revokedUser?.email) {
+              await sendEmail({
+                taskId: task._id,
+                recipientEmail: revokedUser.email,
+                subject: 'Quyền truy cập công việc đã bị thu hồi',
+                text: `Quyền truy cập của bạn đối với công việc "${task.title}" đã bị thu hồi.`,
+              });
+            }
+          } catch (notificationError) {
+            console.error('Revoke share notification error:', notificationError.message);
+          }
+
 
           return res.status(200).json({
             message: 'Đã thu hồi quyền chia sẻ thành công',

@@ -59,6 +59,13 @@ const taskSchema = new mongoose.Schema(
       default: null,
     },
 
+
+    reminderSentAt: {
+      type: Date,
+      default: null,
+    },
+
+
     priority: {
       type: String,
       enum: ['low', 'medium', 'high'],
