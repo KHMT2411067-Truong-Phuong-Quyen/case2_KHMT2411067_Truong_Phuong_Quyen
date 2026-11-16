@@ -59,7 +59,13 @@ class _TaskCreateScreenState extends State<TaskCreateScreen> {
         });
       }
     } catch (e) {
-      debugPrint('Load users error: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không thể tải danh sách người dùng'),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() {

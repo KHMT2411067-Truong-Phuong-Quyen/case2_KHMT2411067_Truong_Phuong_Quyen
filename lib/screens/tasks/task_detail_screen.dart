@@ -85,6 +85,21 @@ currentTask = updatedTask;
 }
 }
 
+
+  Future<void> openTaskHistory() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TaskHistoryPage(
+          taskId: currentTask['_id'].toString(),
+          taskTitle: currentTask['title'] ?? '',
+          token: widget.token,
+        ),
+      ),
+    );
+  }
+
+
 // Xác nhận xóa công việc
 Future<void> confirmDelete() async {
 final confirm = await showDialog<bool>(
@@ -213,6 +228,31 @@ setState(() {isDeleting = false;
           _buildInfo('Mức độ ưu tiên', currentTask['priority']),
           _buildInfo('Ngày bắt đầu', currentTask['startDate']),
           _buildInfo('Hạn hoàn thành', currentTask['dueDate']),
+
+
+          const SizedBox(height: 12),
+
+          Card(
+            child: ListTile(
+              leading: const Icon(
+                Icons.history,
+                color: Colors.blue,
+              ),
+              title: const Text(
+                'Lịch sử hoạt động',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: const Text(
+                'Xem quá trình thay đổi của công việc',
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 18),
+              onTap: openTaskHistory,
+            ),
+          ),
+
+          const Divider(height: 30),
 
 
           const Divider(height: 30),
@@ -400,7 +440,13 @@ setState(() {isDeleting = false;
         );
       }
     } catch (e) {
-      debugPrint('Update permission error: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không thể cập nhật quyền chia sẻ'),
+        ),
+      );
     }
   }
 
@@ -442,7 +488,172 @@ setState(() {isDeleting = false;
         );
       }
     } catch (e) {
-      debugPrint('Revoke share error: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không thể thu hồi quyền chia sẻ'),
+        ),
+      );
     }
+  }
+}
+
+
+class TaskHistoryPage extends StatefulWidget {
+  final String taskId;
+  final String taskTitle;
+  final String token;
+
+  const TaskHistoryPage({
+    super.key,
+    required this.taskId,
+    required this.taskTitle,
+    required this.token,
+  });
+
+  @override
+  State<TaskHistoryPage> createState() => _TaskHistoryPageState();
+}
+
+class _TaskHistoryPageState extends State<TaskHistoryPage> {
+  List<Map<String, dynamic>> activities = [];
+  bool isLoading = true;
+  String? errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    loadActivities();
+  }
+
+  Future<void> loadActivities() async {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'http://10.0.2.2:3000/api/statistics/tasks/${widget
+              .taskId}/activities',
+        ),
+        headers: {
+          'Authorization': 'Bearer ${widget.token}',
+        },
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        setState(() {
+          activities = List<Map<String, dynamic>>.from(
+            data['activities'] ?? [],
+          );
+          isLoading = false;
+        });
+      } else {
+        setState(() {
+          errorMessage = data['message'] ??
+              'Không thể tải lịch sử hoạt động';
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        errorMessage = 'Không thể kết nối đến máy chủ';
+        isLoading = false;
+      });
+    }
+  }
+
+  String formatDate(dynamic value) {
+    if (value == null) return 'Không rõ thời gian';
+
+    final date = DateTime.tryParse(value.toString());
+
+    if (date == null) return 'Không rõ thời gian';
+
+    final localDate = date.toLocal();
+
+    return '${localDate.day.toString().padLeft(2, '0')}/'
+        '${localDate.month.toString().padLeft(2, '0')}/'
+        '${localDate.year} '
+        '${localDate.hour.toString().padLeft(2, '0')}:'
+        '${localDate.minute.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Lịch sử hoạt động'),
+      ),
+      body: isLoading
+          ? const Center(
+        child: CircularProgressIndicator(),
+      )
+          : errorMessage != null
+          ? Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(errorMessage!),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: loadActivities,
+              child: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      )
+          : activities.isEmpty
+          ? const Center(
+        child: Text('Chưa có lịch sử hoạt động'),
+      )
+          : RefreshIndicator(
+        onRefresh: loadActivities,
+        child: ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemCount: activities.length,
+          itemBuilder: (context, index) {
+            final activity = activities[index];
+            final user = activity['userId'];
+
+            final userName = user is Map
+                ? user['fullName'] ?? 'Người dùng'
+                : 'Người dùng';
+
+            return Card(
+              margin: const EdgeInsets.only(
+                bottom: 10,
+              ),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  child: Icon(Icons.history),
+                ),
+                title: Text(
+                  activity['description'] ??
+                      'Hoạt động công việc',
+                ),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Người thực hiện: $userName\n'
+                        'Thời gian: ${formatDate(activity['createdAt'])}',
+                  ),
+                ),
+                isThreeLine: true,
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }

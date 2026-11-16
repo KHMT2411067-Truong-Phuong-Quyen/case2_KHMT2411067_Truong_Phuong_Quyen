@@ -3,6 +3,7 @@ const User = require('../models/User');
 const { createBulkNotifications } = require('../services/notificationService');
 const { sendEmail } = require('../services/emailService');
 const { getTaskRecipients } = require('../services/taskService');
+const TaskActivity = require('../models/TaskActivity');
 
 // Lấy danh sách công việc
 const getTasks = async (req, res) => {
@@ -152,6 +153,15 @@ const createTask = async (req, res) => {
       status: statusMap[status] || status || 'todo',
       startDate: startDate || null,
       dueDate: dueDate || null,
+    });
+
+
+    // Ghi lịch sử tạo công việc
+    await logTaskActivity({
+      taskId: task._id,
+      userId: req.user.userId,
+      action: 'created',
+      description: `Đã tạo công việc "${task.title}"`,
     });
 
 
@@ -316,9 +326,34 @@ const updateTask = async (req, res) => {
       changedFields.push('hạn hoàn thành');
     }
 
+
     // Kiểm tra công việc vừa chuyển sang hoàn thành
     const justCompleted =
       oldStatus !== 'completed' && task.status === 'completed';
+
+      // Ghi lịch sử cập nhật công việc
+      if (changedFields.length > 0 || oldStatus !== task.status) {
+        const activityChanges = [...changedFields];
+
+        if (oldStatus !== task.status) {
+          activityChanges.push('trạng thái');
+        }
+
+        await logTaskActivity({
+          taskId: task._id,
+          userId: req.user.userId,
+          action: justCompleted ? 'completed' : 'updated',
+          description: justCompleted
+            ? `Đã hoàn thành công việc "${task.title}"`
+            : `Đã cập nhật ${activityChanges.join(', ')} của công việc "${task.title}"`,
+          metadata: {
+            changedFields: activityChanges,
+            oldStatus,
+            newStatus: task.status,
+          },
+        });
+      }
+
 
     try {
       const recipients = await getTaskRecipients(task._id);
@@ -396,7 +431,7 @@ const updateTask = async (req, res) => {
       // Xóa công việc
       const deleteTask = async (req, res) => {
         try {
-          const task = await Task.findOneAndDelete({
+          const task = await Task.findOne({
             _id: req.params.id,
             createdBy: req.user.userId,
           });
@@ -406,6 +441,16 @@ const updateTask = async (req, res) => {
               message: 'Không tìm thấy công việc hoặc bạn không có quyền xóa',
             });
           }
+
+          // Ghi lịch sử trước khi xóa
+          await logTaskActivity({
+            taskId: task._id,
+            userId: req.user.userId,
+            action: 'deleted',
+            description: `Đã xóa công việc "${task.title}"`,
+          });
+
+          await task.deleteOne();
 
           return res.status(200).json({
             message: 'Xóa công việc thành công',
@@ -436,6 +481,7 @@ const updateTask = async (req, res) => {
             createdBy: req.user.userId,
           });
 
+
           if (!task) {
             return res.status(404).json({
               message: 'Không tìm thấy công việc hoặc bạn không có quyền',
@@ -460,6 +506,21 @@ const updateTask = async (req, res) => {
           await task.save();
 
           if (oldRole !== role) {
+
+          // Ghi lịch sử thay đổi quyền chia sẻ
+          await logTaskActivity({
+            taskId: task._id,
+            userId: req.user.userId,
+            action: 'share_permission_updated',
+            description: `Đã thay đổi quyền chia sẻ của người dùng ${userId} thành ${role}`,
+            metadata: {
+              sharedUserId: userId,
+              oldRole,
+              newRole: role,
+            },
+          });
+
+
             try {
               await createBulkNotifications({
                 userIds: [userId],
@@ -536,6 +597,18 @@ const updateTask = async (req, res) => {
           await task.save();
 
 
+          // Ghi lịch sử thu hồi quyền chia sẻ
+          await logTaskActivity({
+            taskId: task._id,
+            userId: req.user.userId,
+            action: 'share_access_revoked',
+            description: `Đã thu hồi quyền chia sẻ của người dùng ${userId}`,
+            metadata: {
+              revokedUserId: userId,
+            },
+          });
+
+
           try {
             await createBulkNotifications({
               userIds: [userId],
@@ -570,6 +643,28 @@ const updateTask = async (req, res) => {
           return res.status(500).json({
             message: 'Lỗi máy chủ khi thu hồi quyền chia sẻ',
           });
+        }
+      };
+
+
+      // Ghi lịch sử hoạt động của công việc
+      const logTaskActivity = async ({
+        taskId,
+        userId,
+        action,
+        description,
+        metadata = {},
+      }) => {
+        try {
+          await TaskActivity.create({
+            taskId,
+            userId,
+            action,
+            description,
+            metadata,
+          });
+        } catch (error) {
+          console.error('Log task activity error:', error.message);
         }
       };
 

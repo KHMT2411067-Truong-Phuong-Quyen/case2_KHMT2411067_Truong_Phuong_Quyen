@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'task_detail_screen.dart';
 import '../ notifications/notification_screen.dart';
 import '../../services/notification_service.dart';
+import '../../services/statistics_service.dart';
 
 
 
@@ -32,6 +33,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
   final List<Map<String, dynamic>> tasks = [];
   final TextEditingController searchController = TextEditingController();
   int unreadCount = 0;
+
+
+  Map<String, dynamic>? statistics;
+  Map<String, dynamic>? deadlineTasks;
+
+  bool isLoadingStatistics = false;
+  String? statisticsError;
+  bool isStatisticsExpanded = false;
+
 
   String searchText = '';
   String? selectedStatus;
@@ -217,6 +227,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           'Authorization': 'Bearer ${widget.token}',
         },
       );
+
       if (!mounted) return;
 
       if (response.statusCode == 200) {
@@ -228,9 +239,51 @@ class _TaskListScreenState extends State<TaskListScreen> {
             List<Map<String, dynamic>>.from(data['tasks']),
           );
         });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Không thể tải danh sách công việc'),
+          ),
+        );
       }
     } catch (e) {
-      debugPrint('Lỗi tải công việc: $e');
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không thể kết nối đến máy chủ'),
+        ),
+      );
+    }
+  }
+
+
+  Future<void> loadStatistics() async {
+    setState(() {
+      isLoadingStatistics = true;
+      statisticsError = null;
+    });
+
+    try {
+      final results = await Future.wait([
+        StatisticsService.getStatistics(widget.token),
+        StatisticsService.getDeadlineTasks(widget.token),
+      ]);
+
+      if (!mounted) return;
+
+      setState(() {
+        statistics = results[0] as Map<String, dynamic>;
+        deadlineTasks = results[1] as Map<String, dynamic>;
+        isLoadingStatistics = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        statisticsError = e.toString();
+        isLoadingStatistics = false;
+      });
     }
   }
 
@@ -273,7 +326,259 @@ class _TaskListScreenState extends State<TaskListScreen> {
     loadTasks();
     loadUsers();
     loadUnreadCount();
+    loadStatistics();
   }
+
+
+Widget _buildStatisticsContent() {
+  if (isLoadingStatistics) {
+    return const Padding(
+      padding: EdgeInsets.all(20),
+      child: Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+  }
+
+  if (statisticsError != null) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Text(
+            statisticsError!,
+            style: const TextStyle(color: Colors.red),
+          ),
+          TextButton(
+            onPressed: loadStatistics,
+            child: const Text('Thử lại'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  if (statistics == null) {
+    return const Padding(
+      padding: EdgeInsets.all(16),
+      child: Text('Chưa có dữ liệu thống kê'),
+    );
+  }
+
+  final byStatus =
+      statistics!['byStatus'] as Map<String, dynamic>? ?? {};
+
+  return Padding(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatisticItem(
+                'Đã tạo',
+                statistics!['totalCreated'],
+                Colors.blue,
+              ),
+            ),
+            Expanded(
+              child: _buildStatisticItem(
+                'Được giao',
+                statistics!['totalAssigned'],
+                Colors.orange,
+              ),
+            ),
+            Expanded(
+              child: _buildStatisticItem(
+                'Được chia sẻ',
+                statistics!['totalShared'],
+                Colors.purple,
+              ),
+            ),
+          ],
+        ),
+
+        const Divider(height: 24),
+
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatisticItem(
+                'Chưa làm',
+                byStatus['todo'],
+                Colors.grey,
+              ),
+            ),
+            Expanded(
+              child: _buildStatisticItem(
+                'Đang làm',
+                byStatus['inProgress'],
+                Colors.orange,
+              ),
+            ),
+            Expanded(
+              child: _buildStatisticItem(
+                'Hoàn thành',
+                byStatus['completed'],
+                Colors.green,
+              ),
+            ),
+          ],
+        ),
+
+        const Divider(height: 24),
+
+        Row(
+          children: [
+            Expanded(
+              child: _buildStatisticItem(
+                'Quá hạn',
+                statistics!['overdue'],
+                Colors.red,
+              ),
+            ),
+            Expanded(
+              child: _buildStatisticItem(
+                'Sắp đến hạn',
+                statistics!['upcoming'],
+                Colors.deepOrange,
+              ),
+            ),
+          ],
+        ),
+
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: loadStatistics,
+            icon: const Icon(Icons.refresh), label: const Text('Làm mới'),
+          ),
+        ),
+
+
+        const SizedBox(height: 12),
+
+        _buildDeadlineSection(
+          'Công việc quá hạn',
+          deadlineTasks?['overdueTasks'] ?? [],
+          Colors.red,
+        ),
+
+        const SizedBox(height: 12),
+
+        _buildDeadlineSection(
+          'Công việc sắp đến hạn',
+          deadlineTasks?['upcomingTasks'] ?? [],
+          Colors.deepOrange,
+        ),
+      ],
+    ),
+  );
+}
+
+
+  String formatDeadline(dynamic value) {
+    if (value == null) return 'Chưa thiết lập';
+
+    final date = DateTime.tryParse(value.toString());
+
+    if (date == null) return 'Không xác định';
+
+    final localDate = date.toLocal();
+
+    final day = localDate.day.toString().padLeft(2, '0');
+    final month = localDate.month.toString().padLeft(2, '0');
+    final year = localDate.year;
+    final hour = localDate.hour.toString().padLeft(2, '0');
+    final minute = localDate.minute.toString().padLeft(2, '0');
+
+    return '$day/$month/$year $hour:$minute';
+  }
+
+
+  Widget _buildDeadlineSection(
+      String title,
+      List<dynamic> taskList,
+      Color color,
+      ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.calendar_today, color: color),
+            const SizedBox(width: 8),
+            Text(
+              '$title (${taskList.length})',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        if (taskList.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(8),
+            child: Text('Không có công việc'),
+          )
+        else
+          ...taskList.map((task) {
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.task_alt, color: color),
+              title: Text(task['title'] ?? 'Không có tiêu đề'),
+              subtitle: Text(
+                'Hạn hoàn thành: ${formatDeadline(task['dueDate'])}',
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+
+  Widget _buildStatisticItem(
+      String label,
+      dynamic value,
+      Color color,
+      ) {
+    return Column(
+      children: [
+        Text(
+          '${value ?? 0}',
+          style: TextStyle(
+            fontSize: 23,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+
+  void openTaskActivities() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => TaskActivitiesScreen(
+          token: widget.token,
+        ),
+      ),
+    );
+  }
+
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -333,6 +638,15 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ),
           ),
 
+
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Lịch sử hoạt động',
+            onPressed: openTaskActivities,
+          ),
+
+
+
           IconButton(
             icon: const Icon(Icons.account_circle),
             tooltip: 'Hồ sơ cá nhân',
@@ -344,6 +658,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
                     userId: widget.userId,
                     fullName: widget.fullName,
                     email: widget.email,
+                    token: widget.token,
                   ),
                 ),
               );
@@ -582,6 +897,155 @@ class _TaskListScreenState extends State<TaskListScreen> {
       floatingActionButton: FloatingActionButton(
         onPressed: openCreateTask,
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+
+class TaskActivitiesScreen extends StatefulWidget {
+  final String token;
+
+  const TaskActivitiesScreen({
+    super.key,
+    required this.token,
+  });
+
+  @override
+  State<TaskActivitiesScreen> createState() =>
+      _TaskActivitiesScreenState();
+}
+
+class _TaskActivitiesScreenState
+    extends State<TaskActivitiesScreen> {
+  List<dynamic> activities = [];
+  bool isLoading = true;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    loadActivities();
+  }
+
+
+  Future<void> loadActivities() async {
+    setState(() {
+      isLoading = true;
+      error = null;
+    });
+
+    try {
+      final response = await http.get(
+        Uri.parse('http://10.0.2.2:3000/api/statistics/activities'),
+        headers: {
+          'Authorization': 'Bearer ${widget.token}',
+        },
+      );
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        setState(() {
+          activities = data['activities'] ?? [];
+        });
+      } else {
+        setState(() {
+          error = 'Không thể tải lịch sử hoạt động';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        error = 'Không thể kết nối đến máy chủ';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Lịch sử hoạt động'),
+        backgroundColor: const Color(0xFF4F46E5),
+        foregroundColor: Colors.white,
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : error != null
+          ? Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(error!),
+            TextButton(
+              onPressed: loadActivities,
+              child: const Text('Thử lại'),
+            ),
+          ],
+        ),
+      )
+          : activities.isEmpty
+          ? const Center(
+        child: Text('Chưa có lịch sử hoạt động'),
+      )
+          : RefreshIndicator(
+        onRefresh: loadActivities,
+        child: ListView.builder(
+          itemCount: activities.length,
+          itemBuilder: (context, index) {
+            final activity = activities[index];
+
+            final user = activity['userId'];
+            final userName = user is Map
+                ? user['fullName'] ?? 'Người dùng'
+                : 'Người dùng';
+
+            final date = DateTime.tryParse(
+              activity['createdAt']?.toString() ?? '',
+            )?.toLocal();
+
+            final formattedDate = date == null
+                ? ''
+                : '${date.day.toString().padLeft(2, '0')}/'
+                '${date.month.toString().padLeft(2, '0')}/'
+                '${date.year} '
+                '${date.hour.toString().padLeft(2, '0')}:'
+                '${date.minute.toString().padLeft(2, '0')}';
+
+            return Card(
+              margin: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Color(0xFFE0E7FF),
+                  child: Icon(
+                    Icons.history,
+                    color: Color(0xFF4F46E5),
+                  ),
+                ),
+                title: Text(
+                  activity['description'] ?? '',
+                ),
+                subtitle: Text(
+                  '$userName • $formattedDate',
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
