@@ -428,6 +428,139 @@ const updateTask = async (req, res) => {
           };
 
 
+          // Người tạo hoặc người được giao cập nhật trạng thái
+          const updateTaskStatus = async (req, res) => {
+            try {
+              const { status } = req.body;
+
+              const statusMap = {
+                'Chưa thực hiện': 'todo',
+                'Đang thực hiện': 'in_progress',
+                'Đã hoàn thành': 'completed',
+                todo: 'todo',
+                in_progress: 'in_progress',
+                completed: 'completed',
+              };
+
+              const statusLabels = {
+                todo: 'Chưa thực hiện',
+                in_progress: 'Đang thực hiện',
+                completed: 'Đã hoàn thành',
+              };
+
+              const newStatus = statusMap[status];
+
+              if (!newStatus) {
+                return res.status(400).json({
+                  message: 'Trạng thái công việc không hợp lệ',
+                });
+              }
+
+              // Chỉ người tạo hoặc người được giao mới được đổi trạng thái
+              const task = await Task.findOne({
+                _id: req.params.id,
+                $or: [
+                  { createdBy: req.user.userId },
+                  { assigneeIds: req.user.userId },
+                ],
+              });
+
+              if (!task) {
+                return res.status(403).json({
+                  message: 'Bạn không có quyền cập nhật trạng thái công việc',
+                });
+              }
+
+              const oldStatus = task.status;
+
+              if (oldStatus === newStatus) {
+                return res.status(200).json({
+                  message: 'Trạng thái không thay đổi',
+                  task,
+                });
+              }
+
+              task.status = newStatus;
+              await task.save();
+
+              const justCompleted =
+                oldStatus !== 'completed' && newStatus === 'completed';
+
+              // Ghi lịch sử hoạt động
+              await logTaskActivity({
+                taskId: task._id,
+                userId: req.user.userId,
+                action: justCompleted ? 'completed' : 'updated',
+                description: justCompleted
+                  ? `Đã hoàn thành công việc "${task.title}"`
+                  : `Đã thay đổi trạng thái công việc "${task.title}"`,
+                metadata: {
+                  changedFields: ['trạng thái'],
+                  oldStatus,
+                  newStatus,
+                },
+              });
+
+              // Gửi thông báo và email
+              try {
+                const recipients = await getTaskRecipients(task._id);
+
+                const message = `Công việc "${task.title}" đã thay đổi trạng thái từ "${statusLabels[oldStatus] || oldStatus}" thành "${statusLabels[newStatus]}".`;
+
+                const userIds = recipients
+                  .filter(user => user._id.toString() !== req.user.userId.toString())
+                  .map(user => user._id);
+
+                if (userIds.length > 0) {
+                  await createBulkNotifications({
+                    userIds,
+                    taskId: task._id,
+                    type: justCompleted ? 'task_completed' : 'task_updated',
+                    title: justCompleted
+                      ? 'Công việc đã hoàn thành'
+                      : 'Trạng thái công việc đã thay đổi',
+                    message,
+                  });
+                }
+
+                await Promise.all(
+                  recipients
+                    .filter(user =>
+                      user.email &&
+                      user._id.toString() !== req.user.userId.toString()
+                    )
+                    .map(user =>
+                      sendEmail({
+                        taskId: task._id,
+                        recipientEmail: user.email,
+                                      subject: justCompleted
+                                        ? 'Công việc đã hoàn thành'
+                                        : 'Trạng thái công việc đã thay đổi',
+                                      text: `Xin chào ${user.fullName || 'bạn'},\n\n${message}`,
+                                    })
+                                  )
+                              );
+                            } catch (notificationError) {
+                              console.error(
+                                'Task status notification error:',
+                                notificationError.message
+                              );
+                            }
+
+                            return res.status(200).json({
+                              message: 'Cập nhật trạng thái thành công',
+                              task,
+                            });
+                          } catch (error) {
+                            console.error('Update task status error:', error.message);
+
+                            return res.status(500).json({
+                              message: 'Lỗi máy chủ khi cập nhật trạng thái',
+                            });
+                          }
+                        };
+
+
       // Xóa công việc
       const deleteTask = async (req, res) => {
         try {
@@ -673,6 +806,7 @@ const updateTask = async (req, res) => {
        getTasks,
        createTask,
        updateTask,
+       updateTaskStatus,
        deleteTask,
        updateSharePermission,
        revokeShareAccess,

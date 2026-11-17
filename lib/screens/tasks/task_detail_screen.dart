@@ -132,54 +132,144 @@ await deleteTask();
 
 // Gọi API xóa công việc
 Future<void> deleteTask() async {
-setState(() {
-isDeleting = true;
-});
+  setState(() {
+    isDeleting = true;
+  });
 
-try {
-final response = await http.delete(
-Uri.parse(
-'http://10.0.2.2:3000/api/tasks/${currentTask['_id']}',
-),
-headers: {
-'Authorization': 'Bearer ${widget.token}',
-},
-);
+  try {
+    final response = await http.delete(
+      Uri.parse(
+        'http://10.0.2.2:3000/api/tasks/${currentTask['_id']}',
+      ),
+      headers: {
+        'Authorization': 'Bearer ${widget.token}',
+      },
+    );
 
-final data = jsonDecode(response.body);
+    final data = jsonDecode(response.body);
 
-if (!mounted) return;
+    if (!mounted) return;
 
-if (response.statusCode == 200) {
-ScaffoldMessenger.of(context).showSnackBar(
-const SnackBar(
-content: Text('Xóa công việc thành công'),
-),
-);
+    if (response.statusCode == 200) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Xóa công việc thành công'),
+        ),
+      );
 
-Navigator.pop(context, true);
-} else {
-ScaffoldMessenger.of(context).showSnackBar(
-SnackBar(
-content: Text(data['message'] ?? 'Không thể xóa công việc'),
-),
-);
+      Navigator.pop(context, true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(data['message'] ?? 'Không thể xóa công việc'),
+        ),
+      );
+    }
+  } catch (error) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Không thể kết nối đến máy chủ'),
+      ),
+    );
+  } finally {
+    if (mounted) {
+      setState(() {
+        isDeleting = false;
+      });
+    }
+  }
 }
-} catch (error) {
-if (!mounted) return;
 
-ScaffoldMessenger.of(context).showSnackBar(
-const SnackBar(
-content: Text('Không thể kết nối đến máy chủ'),
-),
-);
-} finally {
-if (mounted) {
-setState(() {isDeleting = false;
-});
-}
-}
-}
+
+  Widget _buildStatusSelector() {
+    final statuses = {
+      'todo': 'Chưa thực hiện',
+      'in_progress': 'Đang thực hiện',
+      'completed': 'Đã hoàn thành',
+    };
+
+    final currentStatus = currentTask['status']?.toString() ?? 'todo';
+
+    // Người tạo hoặc người được giao mới được đổi trạng thái
+    final isAssignee = (currentTask['assigneeIds'] as List? ?? [])
+        .any((user) {
+      final id = user is Map ? user['_id']?.toString() : user.toString();
+      return id == currentUserId;
+    });
+
+    if (!isCreator && !isAssignee) {
+      return _buildInfo('Trạng thái', statuses[currentStatus] ?? currentStatus);
+    }
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      title: const Text('Trạng thái'),
+      subtitle: DropdownButton<String>(
+        isExpanded: true,
+        value: statuses.containsKey(currentStatus) ? currentStatus : 'todo',
+        items: statuses.entries.map((entry) {
+          return DropdownMenuItem<String>(
+            value: entry.key,
+            child: Text(entry.value),
+          );
+        }).toList(),
+        onChanged: (newStatus) {
+          if (newStatus != null) {
+            updateTaskStatus(newStatus);
+          }
+        },
+      ),
+    );
+  }
+
+  Future<void> updateTaskStatus(String status) async {
+    try {
+      final response = await http.put(
+        Uri.parse(
+          'http://10.0.2.2:3000/api/tasks/${currentTask['_id']}/status',
+        ),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.token}',
+        },
+        body: jsonEncode({'status': status}),
+      );
+
+      final data = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        setState(() {
+          currentTask = Map<String, dynamic>.from(data['task']);
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cập nhật trạng thái thành công'),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(data['message'] ?? 'Cập nhật trạng thái thất bại'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Không thể kết nối đến máy chủ'),
+        ),
+      );
+    }
+  }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -224,7 +314,7 @@ setState(() {isDeleting = false;
           const SizedBox(height: 8),
           Text(currentTask['description'] ?? 'Không có mô tả'),
           const Divider(height: 30),
-          _buildInfo('Trạng thái', currentTask['status']),
+          _buildStatusSelector(),
           _buildInfo('Mức độ ưu tiên', currentTask['priority']),
           _buildInfo('Ngày bắt đầu', currentTask['startDate']),
           _buildInfo('Hạn hoàn thành', currentTask['dueDate']),
